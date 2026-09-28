@@ -1,0 +1,471 @@
+﻿using OpenTK.Mathematics;
+using OpenTK.Windowing.GraphicsLibraryFramework;
+using Tetris2D.Graficos;
+using Tetris2D.UI;
+using Tetris2D.Audio;
+
+namespace Tetris2D.Pantallas
+{
+    public class PantallaJuego : Pantalla
+    {
+        private const float IntervaloGravedadBase = 0.90f;
+
+        private readonly string _nombreJugador;
+        private readonly Random _rnd = new();
+        private readonly Tablero _tablero = new();
+
+        private Pieza _piezaActual = null!;
+        private Pieza _piezaSiguiente = null!;
+
+        private int _posX; // posición de la pieza en CELDAS del tablero
+        private int _posY;
+
+        private float _contadorGravedad; // acumula dt hasta que toca bajar
+        private int _puntaje;
+        private int _lineas;
+        private int _nivel = 1;
+        private bool _gameOver;
+        private bool _pausa;
+
+        // Posición del tablero en PÍXELES (se recalcula en cada Renderizar).
+        private float _tableroX;
+        private float _tableroY;
+        private float _tamCelda;
+
+        // Geometría de la card lateral (también se recalcula en cada Renderizar).
+        private float _panelX;
+        private float _panelY;
+        private float _panelW;
+        private float _panelH;
+
+        public PantallaJuego(GestorShader shaders, DibujadorCuadros cuadros, RenderizadorTexto texto, string nombreJugador)
+            : base(shaders, cuadros, texto)
+        {
+            _nombreJugador = nombreJugador;
+        }
+
+        public override void Cargar()
+        {
+            base.Cargar();
+            Reiniciar();
+        }
+
+        private void Reiniciar()
+        {
+            _tablero.Limpiar();
+            _puntaje = 0;
+            _lineas = 0;
+            _nivel = 1;
+            _gameOver = false;
+            _pausa = false;
+            _contadorGravedad = 0f;
+
+            _piezaSiguiente = Pieza.Aleatoria(_rnd);
+            GenerarPiezaNueva();
+        }
+
+        private void GenerarPiezaNueva()
+        {
+            _piezaActual = _piezaSiguiente;
+            _piezaSiguiente = Pieza.Aleatoria(_rnd);
+            _posX = Tablero.Columnas / 2 - 2;
+            _posY = 0;
+            _contadorGravedad = 0f;
+
+            if (_tablero.Colisiona(_piezaActual.Bloques, _posX, _posY))
+            {
+                _gameOver = true;
+                Sonido.Reproducir(TonoJuego.GameOver);
+            }
+        }
+
+        private float IntervaloGravedad =>
+            MathF.Max(0.05f, IntervaloGravedadBase * MathF.Pow(0.85f, _nivel - 1));
+
+        public override void Actualizar(float dt, Vector2 raton)
+        {
+            base.Actualizar(dt, raton);
+            if (_gameOver || _pausa)
+                return;
+
+            _contadorGravedad += dt;
+            while (_contadorGravedad >= IntervaloGravedad)
+            {
+                _contadorGravedad -= IntervaloGravedad;
+
+                if (!MoverPieza(0, 1))
+                {
+                    FijarYGenerar();
+                    break;
+                }
+            }
+        }
+
+        private bool MoverPieza(int dx, int dy)
+        {
+            if (_tablero.Colisiona(_piezaActual.Bloques, _posX + dx, _posY + dy))
+                return false;
+
+            _posX += dx;
+            _posY += dy;
+            return true;
+        }
+
+        private void FijarYGenerar()
+        {
+            _tablero.FijarPieza(_piezaActual, _posX, _posY);
+            Sonido.Reproducir(TonoJuego.Fijar);
+
+            int lineasBorradas = _tablero.LimpiarLineasCompletas();
+
+            if (lineasBorradas > 0)
+            {
+                _lineas += lineasBorradas;
+
+                int puntosLinea = lineasBorradas switch
+                {
+                    1 => 100,
+                    2 => 300,
+                    3 => 500,
+                    4 => 800,
+                    _ => 100 * lineasBorradas
+                };
+                _puntaje += puntosLinea * _nivel;
+
+                int nuevoNivel = 1 + _lineas / 10;
+                if (nuevoNivel > _nivel)
+                {
+                    _nivel = nuevoNivel;
+                    Sonido.Reproducir(TonoJuego.Nivel);
+                }
+                else
+                {
+                    Sonido.Reproducir(TonoJuego.Linea);
+                }
+            }
+
+            GenerarPiezaNueva();
+        }
+
+        public override void AlTecla(Keys tecla)
+        {
+            base.AlTecla(tecla);
+            if (_gameOver)
+            {
+                if (tecla == Keys.Enter)
+                    Reiniciar();
+                return;
+            }
+
+            if (tecla == Keys.Escape)
+            {
+                _pausa = !_pausa;
+                return;
+            }
+
+            if (_pausa)
+                return;
+
+            switch (tecla)
+            {
+                case Keys.Left:
+                    if (MoverPieza(-1, 0)) Sonido.Reproducir(TonoJuego.Mover);
+                    break;
+                case Keys.Right:
+                    if (MoverPieza(1, 0)) Sonido.Reproducir(TonoJuego.Mover);
+                    break;
+                case Keys.Down:
+                    if (MoverPieza(0, 1))
+                    {
+                        _puntaje += 1;
+                        Sonido.Reproducir(TonoJuego.Mover);
+                    }
+                    else
+                    {
+                        FijarYGenerar();
+                    }
+                    break;
+                case Keys.Up:
+                    HardDrop();
+                    break;
+                case Keys.Space:
+                    RotarConEsquinas();
+                    break;
+            }
+        }
+
+        private void HardDrop()
+        {
+            int filasMovidas = 0;
+            while (MoverPieza(0, 1))
+            {
+                filasMovidas++;
+            }
+            _puntaje += filasMovidas * 2;
+            FijarYGenerar();
+        }
+
+        private void RotarConEsquinas()
+        {
+            var rotada = _piezaActual.ObtenerRotacion(true);
+            if (!_tablero.Colisiona(rotada, _posX, _posY))
+            {
+                _piezaActual.AplicarRotacion(true);
+                Sonido.Reproducir(TonoJuego.Rotar);
+            }
+            else
+            {
+                if (!_tablero.Colisiona(rotada, _posX - 1, _posY))
+                {
+                    _posX--;
+                    _piezaActual.AplicarRotacion(true);
+                    Sonido.Reproducir(TonoJuego.Rotar);
+                }
+                else if (!_tablero.Colisiona(rotada, _posX + 1, _posY))
+                {
+                    _posX++;
+                    _piezaActual.AplicarRotacion(true);
+                    Sonido.Reproducir(TonoJuego.Rotar);
+                }
+            }
+        }
+
+        private void CalcularDisposicion(float ancho, float alto)
+        {
+            float margen = alto * 0.05f;
+            float altoEncabezado = alto * 0.14f;
+            float altoUtil = alto - altoEncabezado - margen;
+            _tamCelda = MathF.Floor(altoUtil / Tablero.Filas);
+            float anchoTablero = Tablero.Columnas * _tamCelda;
+            float altoTablero = Tablero.Filas * _tamCelda;
+            float separacion = _tamCelda * 1.6f;
+
+            float anchoPanel = MathF.Max(140f,
+                MathF.Min(ancho * 0.32f, ancho - anchoTablero - separacion - margen * 2f));
+
+            float zonaTotal = anchoTablero + separacion + anchoPanel;
+            _tableroX = MathF.Max(margen, (ancho - zonaTotal) * 0.5f);
+            _tableroY = altoEncabezado + MathF.Max(0f, (altoUtil - altoTablero) * 0.5f);
+
+            _panelX = _tableroX + anchoTablero + separacion;
+            _panelY = _tableroY;
+            _panelW = anchoPanel;
+            _panelH = altoTablero;
+        }
+
+        public override void Renderizar(float ancho, float alto)
+        {
+            CalcularDisposicion(ancho, alto);
+
+            RenderizarEncabezado(ancho, alto);
+            _tablero.Renderizar(Cuadros, _tableroX, _tableroY, _tamCelda);
+
+            if (!_gameOver)
+            {
+                RenderizarPiezaViva();
+            }
+
+            RenderizarPanelesLateral(ancho, alto);
+
+            if (_pausa)
+            {
+                RenderizarOverlayPausa(ancho, alto);
+            }
+
+            if (_gameOver)
+            {
+                RenderizarOverlayGameOver(ancho, alto);
+            }
+        }
+
+        private void RenderizarPiezaViva()
+        {
+            Vector4 bordeOscuro = new(0f, 0f, 0f, 0.35f);
+            float grosorBisel = MathF.Max(1f, _tamCelda * 0.06f);
+            foreach ((int bx, int by) in _piezaActual.Bloques)
+            {
+                float px = _tableroX + (_posX + bx) * _tamCelda;
+                float py = _tableroY + (_posY + by) * _tamCelda;
+                var colorPieza = new Vector4(_piezaActual.Color.X, _piezaActual.Color.Y, _piezaActual.Color.Z, _piezaActual.Color.W);
+
+                Cuadros.DibujarRectangulo(colorPieza, px, py, px + _tamCelda, py + _tamCelda);
+                Cuadros.DibujarBordeRectangulo(bordeOscuro, px, py, px + _tamCelda, py + _tamCelda, grosorBisel);
+            }
+        }
+
+        private void RenderizarPanelesLateral(float ancho, float alto)
+        {
+            if (_panelW < 120f || _panelH < 120f)
+                return;
+
+            Cuadros.DibujarRectangulo(TemaArcade.PanelOscuro, _panelX, _panelY, _panelX + _panelW, _panelY + _panelH);
+            float grosorBorde = MathF.Max(1f, _tamCelda * 0.06f);
+            Cuadros.DibujarBordeRectangulo(TemaArcade.Cian, _panelX, _panelY, _panelX + _panelW, _panelY + _panelH, grosorBorde);
+
+            float cx = _panelX + _panelW * 0.5f;
+            float y = _panelY + _tamCelda * 0.6f;
+            float avance = _tamCelda * 2.2f;
+
+            // --- JUGADOR ---
+            TituloPanel("JUGADOR", cx, y, alto);
+            float altoJugador = _tamCelda * 0.85f;
+            string nombre = _nombreJugador.ToUpperInvariant();
+            float wJugador = Texto.MedirTexto(nombre, altoJugador);
+            Texto.DibujarTexto(nombre, cx - wJugador * 0.5f, y + avance * 0.32f, altoJugador, TemaArcade.Amarillo);
+
+            // --- PUNTAJE ---
+            float yPuntos = y + avance * 0.95f;
+            TituloPanel("PUNTAJE", cx, yPuntos, alto);
+            float valorPuntos = _tamCelda * 1.4f;
+            string textoPuntos = _puntaje.ToString();
+            float wPuntos = Texto.MedirTexto(textoPuntos, valorPuntos);
+            Texto.DibujarTexto(textoPuntos, cx - wPuntos * 0.5f, yPuntos + avance * 0.30f, valorPuntos, TemaArcade.Amarillo);
+
+            // --- LINEAS ---
+            float yLineas = yPuntos + avance * 0.92f;
+            TituloPanel("LINEAS", cx, yLineas, alto);
+            float valorLineas = _tamCelda * 1.4f;
+            string textoLineas = _lineas.ToString();
+            float wLineas = Texto.MedirTexto(textoLineas, valorLineas);
+            Texto.DibujarTexto(textoLineas, cx - wLineas * 0.5f, yLineas + avance * 0.30f, valorLineas, TemaArcade.Verde);
+
+            // --- NIVEL ---
+            float yNivel = yLineas + avance * 0.92f;
+            TituloPanel("NIVEL", cx, yNivel, alto);
+            float valorNivel = _tamCelda * 1.1f;
+            string textoNivel = _nivel.ToString();
+            float wNivel = Texto.MedirTexto(textoNivel, valorNivel);
+            Texto.DibujarTexto(textoNivel, cx - wNivel * 0.5f, yNivel + avance * 0.28f, valorNivel, TemaArcade.Rojo);
+
+            int enNivel = _lineas % 10;
+            string progreso = $"{enNivel}/10 PARA SUBIR";
+            float altoProg = _tamCelda * 0.55f;
+            float wProg = Texto.MedirTexto(progreso, altoProg);
+            Texto.DibujarTexto(progreso, cx - wProg * 0.5f, yNivel + avance * 0.85f, altoProg, TemaArcade.TextoSuave);
+
+            // --- SIGUIENTE ---
+            float ySig = yNivel + avance * 1.45f;
+            TituloPanel("SIGUIENTE", cx, ySig, alto);
+            float altoCaja = _tamCelda * 3.0f;
+            float anchoCaja = MathF.Min(_panelW * 0.86f, _tamCelda * 4.2f);
+            float cajaX = _panelX + (_panelW - anchoCaja) * 0.5f;
+            float cajaY = ySig + avance * 0.30f;
+
+            Cuadros.DibujarRectangulo(TemaArcade.PanelOscuro, cajaX, cajaY, cajaX + anchoCaja, cajaY + altoCaja);
+            Cuadros.DibujarBordeRectangulo(TemaArcade.Cian, cajaX, cajaY, cajaX + anchoCaja, cajaY + altoCaja, grosorBorde);
+            RenderizarPreview(_piezaSiguiente, cajaX, cajaY, anchoCaja, altoCaja);
+
+            // Controles
+            string controles = "← → MOVER ESPACIO ROTAR";
+            string controles2 = "↓ BAJAR ARRIBA CAER";
+            string controles3 = "ESC PAUSAR";
+            float altoCtrl = _tamCelda * 0.55f;
+            float wCtrl = Texto.MedirTexto(controles, altoCtrl);
+            float wCtrl2 = Texto.MedirTexto(controles2, altoCtrl);
+            float wCtrl3 = Texto.MedirTexto(controles3, altoCtrl);
+            float yCtrl = _panelY + _panelH - _tamCelda * 3.4f;
+
+            Texto.DibujarTexto(controles, cx - wCtrl * 0.5f, yCtrl, altoCtrl, TemaArcade.TextoSuave);
+            Texto.DibujarTexto(controles2, cx - wCtrl2 * 0.5f, yCtrl + _tamCelda * 0.8f, altoCtrl, TemaArcade.TextoSuave);
+            Texto.DibujarTexto(controles3, cx - wCtrl3 * 0.5f, yCtrl + _tamCelda * 1.6f, altoCtrl, TemaArcade.TextoSuave);
+        }
+
+        private void RenderizarPreview(Pieza pieza, float cajaX, float cajaY, float anchoCaja, float altoCaja)
+        {
+            if (pieza == null) return;
+
+            int minX = int.MaxValue, maxX = int.MinValue;
+            int minY = int.MaxValue, maxY = int.MinValue;
+            foreach ((int bx, int by) in pieza.Bloques)
+            {
+                minX = Math.Min(minX, bx); maxX = Math.Max(maxX, bx);
+                minY = Math.Min(minY, by); maxY = Math.Max(maxY, by);
+            }
+            float tamMini = MathF.Min(anchoCaja, altoCaja) * 0.30f;
+            float anchoPieza = (maxX - minX + 1) * tamMini;
+            float altoPieza = (maxY - minY + 1) * tamMini;
+            float px0 = cajaX + (anchoCaja - anchoPieza) * 0.5f;
+            float py0 = cajaY + (altoCaja - altoPieza) * 0.5f;
+            Vector4 bordeOscuro = new(0f, 0f, 0f, 0.35f);
+            float grosorBisel = MathF.Max(1f, tamMini * 0.08f);
+
+            foreach ((int bx, int by) in pieza.Bloques)
+            {
+                float px = px0 + (bx - minX) * tamMini;
+                float py = py0 + (by - minY) * tamMini;
+
+                var colorPieza = new Vector4(pieza.Color.X, pieza.Color.Y, pieza.Color.Z, pieza.Color.W);
+                Cuadros.DibujarRectangulo(colorPieza, px, py, px + tamMini, py + tamMini);
+                Cuadros.DibujarBordeRectangulo(bordeOscuro, px, py, px + tamMini, py + tamMini, grosorBisel);
+            }
+        }
+
+        private void RenderizarOverlayPausa(float ancho, float alto)
+        {
+            Cuadros.DibujarRectangulo(new Vector4(0f, 0f, 0f, 0.60f), 0, 0, ancho, alto);
+            float cx = ancho * 0.5f;
+            float panelAncho = ancho * 0.70f;
+            float panelAlto = alto * 0.32f;
+            float panelX = cx - panelAncho * 0.5f;
+            float panelY = alto * 0.34f;
+
+            Cuadros.DibujarRectangulo(TemaArcade.PanelOscuro, panelX, panelY, panelX + panelAncho, panelY + panelAlto);
+            float grosorBorde = MathF.Max(2f, alto * 0.008f);
+            Cuadros.DibujarBordeRectangulo(TemaArcade.Amarillo, panelX, panelY, panelX + panelAncho, panelY + panelAlto, grosorBorde);
+
+            string titulo = "P A U S A";
+            float altoTitulo = alto * 0.07f;
+            float wTitulo = Texto.MedirTexto(titulo, altoTitulo);
+            Texto.DibujarTexto(titulo, cx - wTitulo * 0.5f, panelY + panelAlto * 0.18f, altoTitulo, TemaArcade.Amarillo);
+
+            string nota = "PRESIONA ESC PARA CONTINUAR";
+            float altoNota = alto * 0.03f;
+            float wNota = Texto.MedirTexto(nota, altoNota);
+            Texto.DibujarTexto(nota, cx - wNota * 0.5f, panelY + panelAlto * 0.60f, altoNota, TemaArcade.TextoSuave);
+        }
+
+        private void RenderizarOverlayGameOver(float ancho, float alto)
+        {
+            Cuadros.DibujarRectangulo(new Vector4(0f, 0f, 0f, 0.70f), 0, 0, ancho, alto);
+            float cx = ancho * 0.5f;
+            float panelAncho = ancho * 0.75f;
+            float panelAlto = alto * 0.40f;
+            float panelX = cx - panelAncho * 0.5f;
+            float panelY = alto * 0.30f;
+
+            Cuadros.DibujarRectangulo(TemaArcade.PanelOscuro, panelX, panelY, panelX + panelAncho, panelY + panelAlto);
+            float grosorBorde = MathF.Max(2f, alto * 0.008f);
+            Cuadros.DibujarBordeRectangulo(TemaArcade.Rojo, panelX, panelY, panelX + panelAncho, panelY + panelAlto, grosorBorde);
+
+            string titulo = "GAME OVER";
+            float altoTitulo = alto * 0.07f;
+            float wTitulo = Texto.MedirTexto(titulo, altoTitulo);
+            Texto.DibujarTexto(titulo, cx - wTitulo * 0.5f, panelY + panelAlto * 0.15f, altoTitulo, TemaArcade.Rojo);
+
+            string mensajePuntaje = $"PUNTAJE FINAL: {_puntaje}";
+            float altoMsg = alto * 0.035f;
+            float wMsg = Texto.MedirTexto(mensajePuntaje, altoMsg);
+            Texto.DibujarTexto(mensajePuntaje, cx - wMsg * 0.5f, panelY + panelAlto * 0.45f, altoMsg, TemaArcade.Amarillo);
+
+            string nota = "PRESIONA ENTER PARA REINICIAR";
+            float altoNota = alto * 0.03f;
+            float wNota = Texto.MedirTexto(nota, altoNota);
+            Texto.DibujarTexto(nota, cx - wNota * 0.5f, panelY + panelAlto * 0.70f, altoNota, TemaArcade.TextoSuave);
+        }
+
+        private void TituloPanel(string texto, float cx, float y, float alto)
+        {
+            float altoTitulo = _tamCelda * 0.85f;
+            float w = Texto.MedirTexto(texto, altoTitulo);
+            Texto.DibujarTexto(texto, cx - w * 0.5f, y, altoTitulo, TemaArcade.Magenta);
+        }
+
+        private void RenderizarEncabezado(float ancho, float alto)
+        {
+            string titulo = "TETRIS — 2D";
+            float altoTitulo = alto * 0.035f;
+            float wTitulo = Texto.MedirTexto(titulo, altoTitulo);
+            Texto.DibujarTexto(titulo, (ancho - wTitulo) * 0.5f, alto * 0.02f, altoTitulo, TemaArcade.Cian);
+        }
+    }
+}

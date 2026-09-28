@@ -9,6 +9,14 @@ namespace Tetris2D.UI
     /// </summary>
     public static class TemaArcade
     {
+        //codigo afrefado para definir formas base
+        // define el color azul para el fondo de la pantalla y los bloques
+        public static readonly Vector4 Azul = new(0.20f, 0.45f, 1.00f, 1f);
+        // define el color naranja para simbolos de alerta
+        public static readonly Vector4 Naranja = new(1.00f,0.06f,0.10f,1f);
+        //define el tamaño de los bloques y la forma de las piezas
+
+        public static IReadOnlyList<(int x, int y) >? Bloques {  get; private set; }
         // Fondo principal de las pantallas.
         public static readonly Vector4 Fondo = new(0.04f, 0.05f, 0.12f, 1f);
 
@@ -18,6 +26,8 @@ namespace Tetris2D.UI
         public static readonly Vector4 Amarillo = new(1.00f, 0.85f, 0.20f, 1f);
         public static readonly Vector4 Verde = new(0.25f, 1.00f, 0.55f, 1f);
         public static readonly Vector4 Rojo = new(1.00f, 0.25f, 0.25f, 1f);
+
+
 
         // Texto y apoyos visuales.
         public static readonly Vector4 Blanco = new(1f, 1f, 1f, 1f);

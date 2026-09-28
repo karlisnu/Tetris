@@ -63,8 +63,8 @@ namespace Tetris2D.Graficos
         /// </summary>
         public void DibujarBordeRectangulo(Vector4 color, float x0, float y0, float x1, float y1, float grosor)
         {
-            DibujarRectangulo(color, x0, y0, x1, y0 + grosor);                          // superior
-            DibujarRectangulo(color, x0, y1 - grosor, x1, y1);                          // inferior
+            DibujarRectangulo(color, x0, y0, x1, y0 + grosor);                    // superior
+            DibujarRectangulo(color, x0, y1 - grosor, x1, y1);                    // inferior
             DibujarRectangulo(color, x0, y0 + grosor, x0 + grosor, y1 - grosor);        // izquierdo
             DibujarRectangulo(color, x1 - grosor, y0 + grosor, x1, y1 - grosor);        // derecho
         }
@@ -109,5 +109,7 @@ namespace Tetris2D.Graficos
             GL.DeleteVertexArray(_vao);
             GL.DeleteBuffer(_vbo);
         }
+
+       
     }
 }
